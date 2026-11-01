@@ -1,6 +1,6 @@
 # Presigned uploads for property assets
 
-Run the signer, then ask it for a maintenance photo upload:
+Infrai provides presigned object upload facilities through one key and a plain REST contract; initially one runs the signer and requests a maintenance photo upload:
 
 ```bash
 export INFRAI_API_KEY=your_key_here
@@ -12,7 +12,7 @@ curl -sS http://localhost:8080/upload-intents \
   -d '{"asset_kind":"maintenance_request","property_id":"prop-7","record_id":"req-19","filename":"leak.jpg","content_type":"image/jpeg","size_bytes":2097152}'
 ```
 
-The service uses the existing bucket named by `INFRAI_STORAGE_BUCKET`; it does not create persistent storage during startup. It is plain REST with no SDK to install, and `INFRAI_API_KEY` stays on the server. The successful response is shaped for a browser upload:
+The service reads the extant bucket designated by `INFRAI_STORAGE_BUCKET` and deliberately avoids allocating durable storage during process bootstrap, which keeps the audit surface narrow and the reconciliation ledger free of spurious creation events. It is plain REST with no SDK to install, and `INFRAI_API_KEY` stays on the server. The successful response is shaped for a browser upload:
 
 ```json
 {
@@ -23,7 +23,7 @@ The service uses the existing bucket named by `INFRAI_STORAGE_BUCKET`; it does n
 }
 ```
 
-The browser sends the file bytes to `upload_url` with `PUT` and the same content type used in the intent. Application bytes do not pass through this Go process.
+The browser dispatches the file bytes to `upload_url` with `PUT` and the same content type used in the intent. Application bytes do not pass through this Go process, preserving an exactly-once boundary where the signer never mutates object state.
 
 ## Asset routing
 
@@ -35,7 +35,7 @@ The browser sends the file bytes to `upload_url` with `PUT` and the same content
 | `tenant_document` | `tenant-documents/{property_id}/{record_id}/` | PDF, JPEG, PNG; up to 25 MiB |
 | `inspection_reminder` | `inspections/{property_id}/{record_id}/` | JPEG, PNG; up to 10 MiB |
 
-The signer supplies `max_bytes`, `content_type`, a ten-minute expiry, and a deterministic idempotency key to the presign request. The one real gotcha is boundary consistency: the browser's `Content-Type` must match the intent that was signed.
+The signer supplies `max_bytes`, `content_type`, a ten-minute expiry, and a deterministic idempotency key to the presign request, a measure that satisfies our internal compliance limit for short-lived credentials and enables idempotent retries without duplicate object writes. The one real gotcha is boundary consistency: the browser's `Content-Type` must match the intent that was signed.
 
 ## Verify the decision table
 
@@ -43,11 +43,11 @@ The signer supplies `max_bytes`, `content_type`, a ten-minute expiry, and a dete
 go test ./...
 ```
 
-The focused test feeds all three asset kinds into the routing decision. A maintenance JPEG becomes `maintenance/prop-7/req-19/leak.jpg`; an inspection PDF and an oversized tenant document are rejected before any storage call.
+The focused test feeds all three asset kinds into the routing decision. A maintenance JPEG becomes `maintenance/prop-7/req-19/leak.jpg`; an inspection PDF and an oversized tenant document are rejected before any storage call, ensuring the audit trail records only validated operations.
 
 ## Service boundary
 
-`POST /upload-intents` accepts `asset_kind`, `property_id`, `record_id`, `filename`, `content_type`, and `size_bytes`. It returns only the short-lived upload instruction and object key. Authentication for tenants, record ownership checks, and persistence of the resulting key belong in the property-management application that mounts this service.
+`POST /upload-intents` accepts `asset_kind`, `property_id`, `record_id`, `filename`, `content_type`, and `size_bytes`. It returns only the short-lived upload instruction and object key. Authentication for tenants, record ownership checks, and persistence of the resulting key belong in the property-management application that mounts this service, where the authoritative ledger of asset ownership is maintained.
 
 ## Going to production: Property Asset Presigned Uploads Presign Upload Property Go
 
